@@ -3,22 +3,26 @@ import PropTypes from 'prop-types'
 import { transform } from 'buble'
 import PlaygroundError from 'rsg-components/PlaygroundError'
 import Vue from 'vue'
-import styleScoper from '../../utils/styleScoper'
-import separateScript from '../../utils/separateScript'
-import getVars from '../../utils/getVars'
+import { DocumentedComponentContext } from '../VsgReactComponent/ReactComponent'
+import { RenderJsxContext } from '../../utils/renderStyleguide'
+import styleScoper from './utils/styleScoper'
+import separateScript from './utils/separateScript'
+import getVars from './utils/getVars'
+import cleanComponentName from '../../utils/cleanComponentName'
 
 const Fragment = React.Fragment ? React.Fragment : 'div'
 
-export default class Preview extends Component {
+class Preview extends Component {
 	static propTypes = {
 		code: PropTypes.string.isRequired,
 		evalInContext: PropTypes.func.isRequired,
-		vuex: PropTypes.object
+		vuex: PropTypes.object,
+		component: PropTypes.object,
+		renderRootJsx: PropTypes.object
 	}
 	static contextTypes = {
 		config: PropTypes.object.isRequired,
-		codeRevision: PropTypes.number.isRequired,
-		renderRootJsx: PropTypes.object
+		codeRevision: PropTypes.number.isRequired
 	}
 
 	state = {
@@ -71,8 +75,10 @@ export default class Preview extends Component {
 			error: null
 		})
 
-		const { code, vuex } = this.props
-		const { renderRootJsx } = this.context
+		const { code, vuex, component, renderRootJsx } = this.props
+
+		const documentedComponent = component.module.default || component.module
+		component.displayName = cleanComponentName(this.props.component.name)
 		if (!code) {
 			return
 		}
@@ -125,6 +131,17 @@ export default class Preview extends Component {
 		const moduleId = 'data-v-' + Math.floor(Math.random() * 1000) + 1
 		previewComponent._scopeId = moduleId
 
+		if (
+			this.context.config.locallyRegisterComponents &&
+			documentedComponent &&
+			!previewComponent.components
+		) {
+			// register component locally
+			previewComponent.components = {
+				[component.displayName]: documentedComponent
+			}
+		}
+
 		// then we just have to render the setup previewComponent in the prepared slot
 		const rootComponent = renderRootJsx
 			? renderRootJsx.default(previewComponent)
@@ -156,32 +173,25 @@ export default class Preview extends Component {
 	}
 
 	evalInContext(compiledCode, listVars) {
-		const exampleComponentCode = `function getConfig() {
-	let __component__ = {}
-	
-	// When we do new Vue({name: 'MyComponent'}) the comfig object
-	// is set to __component__
-	function Vue(params){ __component__ = params; }
-
-	eval(${JSON.stringify(
-		`${
-			// run script for SFC and full scripts
-			// and set config object in __component__
-			// if the structure is vsg mode, define local variables
-			// to set them up in the next step
-			compiledCode
-		};__component__.data = __component__.data || function() {return {${
+		const exampleComponentCode = `let __component__ = {}
+	${
+		// run script for SFC and full scripts
+		// and set config object in __component__
+		// if the structure is vsg mode, define local variables
+		// to set them up in the next step
+		compiledCode
+	};__component__.data=__component__.data||function(){return {${
 			// add local vars in data
 			// this is done through an object like {varName: varName}
 			// since each varName is defined in compiledCode, it can be used to init
 			// the data object here
-			listVars.map(varName => `${varName}: ${varName}`).join(',')
-		}};};`
-	)});
-
-	return __component__;
-}
-return getConfig();`
+			listVars.map(varName => `${varName}:${varName}`).join(',')
+		}};};
+	// When wiriting "new Vue({name: 'MyComponent'})" the config object
+	// is assigned to the variable __component__
+	function Vue(params){ __component__ = params; }
+	// Then we simply return the __component__ variable
+	return __component__;`
 		return this.props.evalInContext(exampleComponentCode)
 	}
 
@@ -206,4 +216,16 @@ return getConfig();`
 			</Fragment>
 		)
 	}
+}
+
+export default function PreviewWithComponent(props) {
+	return (
+		<RenderJsxContext.Consumer>
+			{renderRootJsx => (
+				<DocumentedComponentContext.Consumer>
+					{component => <Preview {...props} component={component} renderRootJsx={renderRootJsx} />}
+				</DocumentedComponentContext.Consumer>
+			)}
+		</RenderJsxContext.Consumer>
+	)
 }
